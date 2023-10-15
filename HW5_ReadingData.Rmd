@@ -1,0 +1,395 @@
+---
+title: "HW5_ReadingData"
+author: "Rocco Matarazzo"
+date: '`r Sys.Date()`'
+output: 
+  html_document:
+    toc: TRUE
+    toc_depth: 3
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(readr)
+
+```
+
+# Reading In Data
+
+In this section we'll read the data in two different ways. The first is the way given to us by the source wesbite. The second is my personal preference, using tidyverse functions.
+
+The issue with inner_joining() in the tidyverse is that the columns become duplicated. When we join on all variables except G1, G2, G3, and absences, we only have duplicates from G1, G2, G3, and absences.
+
+I renamed d1 and d2 to better representative names, math and por, like the csv files. I decided to factor sex, mother and father education, as well as family relationship. I am interested in how these variables coincide with one another.
+```{r}
+
+# Reading Data from Source
+d1=read.table("C:/Users/rnm50/OneDrive/Documents/1A North Carolina State University/Fall 2023/ST558 Data Science/student+performance/student/student-mat.csv",sep=";",header=TRUE)
+d2=read.table("C:/Users/rnm50/OneDrive/Documents/1A North Carolina State University/Fall 2023/ST558 Data Science/student+performance/student/student-por.csv",sep=";",header=TRUE)
+
+d3=merge(d1,d2,by=c("school","sex","age","address","famsize","Pstatus","Medu","Fedu","Mjob","Fjob","reason","nursery","internet"))
+print(nrow(d3)) # 382 students
+
+# Rewriting these datasets to names I like
+math <- d1
+por <- d2
+
+# Reading in Data using Tidyverse
+# Still using d1 and d2 as initial read in
+tidyMergedData <- d1 %>% 
+  inner_join(d2, by = c("school","sex","age","address","famsize","Pstatus","Medu","Fedu","Mjob","Fjob","reason","nursery","internet"))
+
+# Joining based on everything but G1, G2, G3, and absences
+combinedData <- d1 %>%
+  inner_join(d2, by = c("school", "sex", "age", "address", "famsize", "Pstatus", "Medu", "Fedu", "Mjob", "Fjob","reason","guardian", "traveltime", "studytime", "failures", "schoolsup", "famsup", "paid", "activities", "nursery", "higher", "internet", "romantic", "famrel", "freetime", "goout", "Dalc", "Walc", "health"))
+
+combinedData <- 
+  as_tibble(combinedData) %>% 
+  mutate(sexFactored = factor(sex),
+         fatherEdFactored = factor(Fedu),
+         motherEdFactored = factor(Medu),
+         famRelFactored = factor(famrel))
+  
+math <-
+  as_tibble(math) %>% 
+  mutate(sexFactored = factor(sex),
+         fatherEdFactored = factor(Fedu),
+         motherEdFactored = factor(Medu),
+         famRelFactored = factor(famrel))
+por <-
+  as_tibble(por) %>% 
+  mutate(sexFactored = factor(sex),
+         fatherEdFactored = factor(Fedu),
+         motherEdFactored = factor(Medu),
+         famRelFactored = factor(famrel))
+  
+```
+
+# Summarizing Data
+
+## Categorical Variables
+Categorical data summary can be done numerically or graphically.
+
+Below are a few contingency tables regarding this data.
+#### One Way Contingency Table
+```{r}
+table(por$sexFactored)
+```
+There are 266 Males and 383 Females in the Portuguese Language data set.
+
+#### Two Way Contingency Table
+```{r}
+
+table(por$famRelFactored, por$sex)
+
+```
+This is a two-way contingency table displaying family relationship and student sex.
+There are 84 males in the Portuguese Language data set who have an excellent family relationship (famrel = 5). There are 17 females in the Portuguese Language data set who have a very bad family relationship (famrel = 1).
+
+#### Three Way Contingency Table
+```{r}
+
+table(por$motherEdFactored, por$fatherEdFactored, por$sex)
+
+```
+Here is a 3-way contingency table displaying a student's father's and mother's education, separated by sex. 
+The mother's education factor is on the vertical far left side. The father's education factor is on the uppermost horizontal top row.
+The top contingency table displays the data for females, while the bottom for males.
+There are almost as many females (47) as there are males (48) who have both mothers and fathers with higher education. 
+
+#### Conditional Contingency Table
+```{r}
+# Subsetting Data and building two-way table:
+onlyFemales <- por %>% filter(sex == "F")
+table(onlyFemales$motherEdFactored, onlyFemales$fatherEdFactored)
+
+# Setting a 3-Way Table and subsetting it after the fact:
+three_way <- table(por$motherEdFactored, por$fatherEdFactored, por$sex)
+three_way[ , , 1]
+```
+Both of these tables display a two-way table where mother's education is on the left, and father's education on the top -- for Females only.
+There is only 1 female who has a father and mother with no education.
+
+#### Using dplyr
+```{r}
+
+TwoWayDplyr <- math %>% 
+  group_by(fatherEdFactored, sexFactored) %>%
+  summarize(total = n()) %>%
+  pivot_wider(names_from = sexFactored, values_from = total, values_fill = 0)
+ TwoWayDplyr
+```
+Here I switched to the math data set. This shows the contingency table for father's education level by gender. There are only 2 students in this dataset with fathers that have no education. There are roughly the same number of males and females who have fathers with level 2 education or higher.
+
+#### Graphs
+
+In this section I will be using ggplot() in order to create the desired graphs.
+
+```{r}
+# plots
+# set base first
+g <- ggplot(data = math, aes(x=sexFactored))
+g + 
+  # bar
+  geom_bar(aes(fill = sexFactored)) +
+  # label
+  labs(x = "Sex", y = "Count") +
+  # here we are SCALING the x variable (which is discrete/categorical) and renaming the M/F options
+  scale_x_discrete(labels = c("Female", "Male")) +
+  # title
+  ggtitle("Gender Counts in Math Dataset") +
+  theme_bw()
+
+```
+
+This is a simple barplot. There are just over 200 females in the math dataset. There are more females than males.
+
+```{r}
+# plots
+
+mathSum <- math %>% group_by(sexFactored, famRelFactored) %>% summarize(count = n())
+
+g <- ggplot(mathSum, aes(x = sexFactored, y = count))
+g + 
+  geom_bar(aes(fill = famRelFactored), stat = "identity") +
+  labs(x = "Sex", y = "Count") +
+  # here we are SCALING the x variable (which is discrete/categorical) and renaming the M/F options
+  scale_x_discrete(labels = c("Female", "Male")) +
+  # title
+  ggtitle("Family Relationship by Gender") +
+  theme_bw()
+
+```
+Here we have almost the same plot as above, but instead "stack" family relationship as well. It seems that there are more males than females with excellent family relationships. There are also less males than females with very bad family relationships.
+
+## Numerical Variables
+Now we can deal with numerical variables! 
+
+#### Measures of Center and Spread
+```{r}
+# For center we can use mean() and for spread we can use sd()
+### AGE ###
+# Math Dataset
+paste("The mean age in the math dataset is", round(mean(math$age), 2))
+paste("The std. dev. of age in the math dataset is", round(sd(math$age), 2))
+# Port. Dataset
+paste("The mean age in the Portuguese dataset is", round(mean(por$age), 2))
+paste("The std. dev. of age in the Portuguese dataset is", round(sd(por$age), 2))
+
+### ABSENCES ###
+# Math Dataset
+paste("The mean number of absences in the math dataset is", round(mean(math$absences), 2))
+paste("The std. dev. of absences in the math dataset is", round(sd(math$absences), 2))
+# Port. Dataset
+paste("The mean number absences in the Portuguese dataset is", round(mean(por$absences), 2))
+paste("The std. dev. of absences in the Portuguese dataset is", round(sd(por$absences), 2))
+
+### G3 ###
+# Math Dataset
+paste("The mean G3 score in the math dataset is", round(mean(math$G3), 2))
+paste("The std. dev. of G3 score in the math dataset is", round(sd(math$G3), 2))
+# Port. Dataset
+paste("The mean G3 score in the Portuguese dataset is", round(mean(por$G3), 2))
+paste("The std. dev. of G3 score in the Portuguese dataset is", round(sd(por$G3), 2))
+
+```
+Above I used the paste() and base mean()/sd() functions to find measures of center and spread for the three variables. 
+Below, using the tidyverse, I will find these by subsetting the data in a meaningful way.
+
+```{r}
+# Here we can use the summarize() function in tidyverse
+math %>% summarize(math_meanAge = mean(age),
+                  math_meanAbsences = mean(absences),
+                  math_meanG3 = mean(G3),
+              math_sdAge = sd(age),
+                  math_sdAbsences = sd(absences),
+                  math_sdG3 = sd(G3))
+
+por %>% summarize(por_meanAge = mean(age),
+                  por_meanAbsences = mean(absences),
+                  por_meanG3 = mean(G3),
+              por_sdAge = sd(age),
+                  por_sdAbsences = sd(absences),
+                  por_sdG3 = sd(G3))
+```
+The average age in the Portuguese dataset is younger than the average age in the Math dataset, while also being less spread out.
+
+#### Center and Spread Across a Grouping Variable
+
+As I did in the second part of the last section, I can use the summarize() function. First, I should use group_by() to separate the data.
+
+```{r}
+# Here we can use the summarize() function in tidyverse
+# Using group_by() to get the value for each group
+math %>%
+  group_by(fatherEdFactored) %>%
+  summarize(math_meanG1 = mean(G1),
+                  math_meanG2 = mean(G2),
+                  math_meanG3 = mean(G3),
+              math_sdG1 = sd(G1),
+                  math_sdG2 = sd(G2),
+                  math_sdG3 = sd(G3))
+
+por %>% 
+    group_by(fatherEdFactored) %>%
+    summarize(por_meanG1 = mean(G1),
+                  por_meanG2 = mean(G2),
+                  por_meanG3 = mean(G3),
+              por_sdG1 = sd(G1),
+                  por_sdG2 = sd(G2),
+                  por_sdG3 = sd(G3))
+
+```
+Students with the worst average scores on first period, second period, and final exam grades are those who have a father with 5th to 9th grade education. It seems that students who have a father with higher education score the best on average.
+
+#### Two Grouping Variables
+Keeping all three exam scores and father education, I also added gender into the mix.
+
+```{r}
+# Here we can use the summarize() function in tidyverse
+# Using group_by() to get the value for each group
+math %>%
+  group_by(fatherEdFactored, sexFactored) %>%
+  summarize(math_meanG1 = mean(G1),
+                  math_meanG2 = mean(G2),
+                  math_meanG3 = mean(G3),
+              math_sdG1 = sd(G1),
+                  math_sdG2 = sd(G2),
+                  math_sdG3 = sd(G3))
+
+por %>% 
+    group_by(fatherEdFactored, sexFactored) %>%
+    summarize(por_meanG1 = mean(G1),
+                  por_meanG2 = mean(G2),
+                  por_meanG3 = mean(G3),
+              por_sdG1 = sd(G1),
+                  por_sdG2 = sd(G2),
+                  por_sdG3 = sd(G3))
+
+```
+
+When splitting by gender, we can see that the best scorers across all three periods (first, second, final grade) are actually males who have fathers with no education in the Portuguese and math datasets.
+
+#### Correlation Matrix
+This output will tell us about the linear association between each variable in the dataset.
+
+```{r}
+# subsetting numeric variables
+math_numeric <- math %>% select(age, absences, G1, G2, G3)
+por_numeric <- por %>% select(age, absences, G1, G2, G3)
+cor(math_numeric)
+cor(por_numeric)
+```
+The top correlation matrix is for the math dataset. The bottom correlation matrix is for the Portuguese dataset.
+It seems that age and final period score is more correlated in the Portuguese dataset than the math dataset. Overall, period scores have stronger association with one another in the Portugeuse dataset than they do in the math dataset (G1:G2, G1:G3, G2:G3).
+
+#### Histograms
+```{r}
+# Base plot
+g <- ggplot(por, aes(x=absences))
+# adding histogram (ugly looking!)
+g + geom_histogram(aes(fill = sexFactored), position = "stack", size = 1.5, binwidth = 3) +
+  theme_bw() + 
+  ggtitle("Histogram of Absences")
+
+# same proceudre, different variable
+g <- ggplot(por, aes(x=age))
+g + geom_histogram(aes(fill = sexFactored), position = "stack", size = 1.5, binwidth = 1) + 
+  theme_bw() + 
+  ggtitle("Histogram of Age")
+
+```
+Both of these distributions are skewed right. It seems that age = 22 may be an outlier for the Males. There is a larger number of females than males.
+
+#### Density Plots
+
+```{r}
+# Base plot
+g <- ggplot(por, aes(x=G1))
+# adding histogram (ugly looking!)
+g + geom_density(adjust = 0.5, alpha = 0.5, aes(fill = sexFactored), position = "stack") +
+  theme_bw() + 
+  ggtitle("Density Plot of G1")
+
+# same proceudre, different variable
+g <- ggplot(por, aes(x=G3))
+g + geom_density(adjust = 0.5, alpha = 0.5, aes(fill = sexFactored), position = "stack") + 
+  theme_bw() + 
+  ggtitle("Density Plot of G3")
+
+```
+It seems that both males and females follow the roughly the same distribution for G1 and G3 scores. It looks like there is a larger sample of females, however.
+
+#### Box Plots
+
+```{r}
+# Base plot
+g <- ggplot(por, aes(x=G3))
+# adding histogram (ugly looking!)
+g + geom_boxplot(aes(fill = fatherEdFactored)) +
+  theme_bw() + 
+  ggtitle("Box Plot of G3 Score per Father's Education Level")
+
+# same proceudre, different variable
+g <- ggplot(por, aes(x=G3))
+g + geom_boxplot(aes(fill = motherEdFactored)) +
+  theme_bw() + 
+  ggtitle("Box Plot of G3 Score per Mother's Education Level")
+
+```
+The distributions of scores per group are roughly the same for father and mother education. They all are within 3 points of the same mean. It seems that there are more outliers within the mother's education group.
+
+#### Scatterplots
+```{r}
+# Base plot
+g <- ggplot(math, aes(x=absences, y=G3))
+# Turning it into a scatter plot
+g + geom_point(aes(col = sexFactored)) +
+  # label
+  labs(x = "Number of Absences", y = "G3 Score") +
+  # title
+  ggtitle("G3 Score by Number of Absences per Gender") +
+  theme_bw()
+
+
+# Base plot
+g <- ggplot(math, aes(x=age, y=G3))
+# Turning it into a scatter plot
+g + geom_point(aes(col = sexFactored)) +
+  # label
+  labs(x = "Ages", y = "G3 Score") +
+  # title
+  ggtitle("Age by Number of Absences per Gender") +
+  theme_bw()
+
+```
+Both of these scatterplots look at each student's G3 score in the math dataset, grouped by gender. The first plot displays G3 score by the number of absences. It is interesting that the student with no absences got the lowest G3 score, while the student with the most absences scored among the middle of the group. The second plot shows G3 score by age. The best score came from a 16 year old. Ages 15-19 each had at least one score of 0.
+
+#### Faceting One Grouping Variable
+
+```{r}
+# Base plot
+g <- ggplot(math, aes(x=G1, y=G3))
+# Using Faceting
+g + geom_point() +
+  # Display graph for each grouping
+  facet_wrap(~ sexFactored) + theme_bw()
+
+```
+This graph shows the first period and final period scores by sex. They both seem to have a very similar trend. The greatest score for males was higher than the greatest score for females. There were more females who scored 0's on the G3 exam.
+
+#### Faceting Two Grouping Vars.
+```{r}
+# Base plot
+g <- ggplot(por, aes(x=G1, y=G3))
+# Using Faceting
+g + geom_point() +
+  # Display graph for each grouping
+  facet_wrap(sexFactored ~ famRelFactored) + theme_bw()
+
+```
+
+This graph is a little more complex to digest than the one before it. This shows first and final exam scores by gender, by family relationship. It is noticeable that there are many more students with relationships closer to excellent (groups 4 and 5) than there are closer to very bad (1 and 2) for both genders. It is interesting that each grouping has a general trend line. It seems that the higher you score in the first period, the higher your score in the final period, regardless of family relationship and gender.

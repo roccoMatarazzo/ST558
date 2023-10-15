@@ -1,0 +1,194 @@
+---
+title: "ST558 HW6"
+author: "Rocco Matarazzo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+library(parallel)
+```
+# Our Very Own T-Test
+
+First, we'll write a function that takes on a vector of numeric values and the mean value of comparsion that ultimately outputs the observed t-statistic.
+
+```{r}
+
+t_observed <- function(data, mu_0){
+  # Getting the Sample Mean
+  sampleMean <- mean(data)
+  # Getting the sample std. dev.
+  sampleSD <- sd(data)
+  # Getting the sample size
+  n <- length(data)
+  
+  # Getting the observed t-Stat
+  t_obs <- (sampleMean - mu_0)/(sampleSD/sqrt(n))
+  # Printing the observed stat.
+  return(t_obs) 
+}
+
+```
+
+Our next function will tell us whether or not to reject the null hypothesis. This function will take the inputs of the observed test statistic, sample size, significance level (alpha), and direction of the test.
+
+```{r}
+
+decision <- function(t_obs, n, alpha, direction){
+  # Get Critical Value for Rejection
+  if(direction == "left" | direction == "Left"){
+    
+    # HA: less than symbol
+    critValue <- qt(alpha, n-1, lower.tail = FALSE)
+   # Compare this with t_obs
+    if(t_obs < critValue){
+      result <- TRUE
+    }else{
+      result <- FALSE
+    }
+  }
+  else if(direction == "right" | direction == "Right"){
+        
+    # HA: greater than symbol
+    critValue <- qt(1-alpha, n-1, lower.tail = FALSE)
+   # Compare this with t_obs
+    if(t_obs > critValue){
+      result <- TRUE
+    }else{
+      result <- FALSE
+    }
+  }
+  else if(direction == "two-sided" | direction == "Two-Sided" | direction == "Two Sided"){
+        
+    # HA: not equal than symbol
+    critValue <- qt(1-(alpha/2), n-1, lower.tail = FALSE)
+    # Compare this with t_obs
+    if(abs(t_obs) > critValue){
+      result <- TRUE
+    }else{
+      result <- FALSE
+    }
+  }else{
+  # if none options available   
+    break
+  
+  }
+  
+  return(result)
+}
+
+```
+
+Now we can test out our two functions with the classic iris dataset.
+
+### Sepal Length != 5.5
+```{r}
+
+# Getting the observed t-stat
+t_obs <- t_observed(iris$Sepal.Length, 5.5)
+
+# Getting decision to reject or not
+decision(t_obs, length(iris$Sepal.Length), 0.05, direction = "two-sided")
+```
+Here we shall reject the null hypothesis. There is evidence to suggest that the mean sepal length differs from 5.5.
+
+
+### Sepal Width > 3.5
+```{r}
+
+# Getting the observed t-stat
+t_obs <- t_observed(iris$Sepal.Width, 3.5)
+
+# Getting decision to reject or not
+decision(t_obs, length(iris$Sepal.Width), 0.05, direction = "Right")
+```
+Here we shall fail to reject the null hypothesis. There is not evidence to suggest that the mean sepal width is greater than 3.5.
+
+
+### Petal Length < 4
+```{r}
+
+# Getting the observed t-stat
+t_obs <- t_observed(iris$Petal.Length, 3.5)
+
+# Getting decision to reject or not
+decision(t_obs, length(iris$Petal.Length), 0.05, direction = "Left")
+```
+Here we shall fail to reject the null hypothesis. There is evidence to suggest that the mean petal length differs from 5.5.
+
+# Monte Carlo Study
+
+First, we shall generate many random values from the Gamma Distribution.
+```{r}
+# Setting Parameters
+n <- 100
+shape <- 20
+rate <- 1
+
+# number of sims
+nsim <- 10000
+
+# creating a function that we can replicate over and over again
+testResults <- function(n, shape, rate){
+    null_mean <- shape*rate
+    randomValues <- rgamma(n, shape, rate)
+    testStat <- t_observed(randomValues, null_mean)
+    outcome <- decision(testStat, n, 0.05, "Two-Sided")
+    outcome
+}
+
+# Replication taking place (Turning this into a function):
+replicationFunction <- function(list_object) {
+  rate <- 1 # keeping rate constant at 1 
+  nsim <- 10000 #number of simulations
+  
+  # creating blank DF to store output
+  output <- data.frame(matrix(ncol = 3, nrow = 0))
+  x <- c("n", "shape", "mean_proportion")
+  colnames(output) <- x
+  
+  for(i in 1:length(list_object)){
+    
+  n <- list_object[[i]]$n 
+  shape <- list_object[[i]]$shape
+  replication <- replicate(nsim, testResults(n, shape, rate))
+
+  # output[i,]$n <- n
+  # output[i,]$shape <- shape
+  # output[i,]$mean_proportion <- mean(replication)
+  # # Getting the means
+  }  
+  return(mean(replication))
+    }
+```
+
+# Parallel Computing
+```{r, error = TRUE}
+# Setting Base Vectors
+sampleSizes <- c(10, 20, 30, 50, 100)
+shapes <- c(0.2, 0.5, 1, 2, 5, 10, 20)
+rates <- c(1)
+
+# Getting a dataframe with each combination
+df <- expand.grid(n = sampleSizes, shape = shapes)
+
+# Using the purrr package
+# I believe this is possible as Dr. Post suggests with apply() and such
+# but I have used this solution before
+passingValues <- df %>% purrr::transpose()
+
+# Making my cluster
+cores <- detectCores() # ive got 8 cores! 
+cluster <- makeCluster(cores - 1) # setting up 7 cores
+clusterExport(cluster, list("replicationFunction", "testResults", "t_observed", "decision")) # setting up functions
+
+# Doing the function through parallelization
+resultsPar <- parLapply(cluster, 
+                      X = passingValues,
+                      fun =  replicationFunction(list_object = passingValues)
+                      )
+```
+Unfortunately I am still getting an error here. Due to time constraints this week in particular (exam in other class and more than usual work appointments) I was unable to complete this. I appreciate your understanding and understand the potential for a low grade for this assignment.
