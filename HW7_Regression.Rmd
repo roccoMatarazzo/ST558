@@ -8,29 +8,148 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 
+# Call packages
 library(ggplot2)
 library(tidyverse)
-library(ciTools)
+library(readr)
+library(ggcorrplot)
 library(caret)
 
 ```
 
-## R Markdown
+### Reading the Data
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+First, call the following packages: `r ggplot2`, `r tidyverse`, `r readr`, `r ggcorrplot`, and `r caret`. Now, we can read in our data:
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
 
-```{r cars}
-summary(cars)
+# Setting the File Path
+fileName <-"C:/Users/rnm50/OneDrive/Documents/1A North Carolina State University/Fall 2023/ST558 Data Science/SeoulBikeData.csv"
+
+# Read data
+SeoulData <- read_csv(fileName, locale=locale(encoding="latin1"))
+
 ```
 
-## Including Plots
+We need to include the argument for locale in order to fix the error when loading the file.
 
-You can also embed plots, for example:
+### Split the Data
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+Here we will split the data into a testing set and training set. The training set will contain 75% of the data. The testing set will contain 25% of the data.
+
+```{r}
+
+# setting seed so the sets stay consistent
+set.seed(50)
+
+# using dplyr
+# assigning a number to each row in the dataset
+SeoulData$number <- 1:nrow(SeoulData)
+
+# Splitting the data into two sets
+train <- SeoulData %>% dplyr::sample_frac(0.75)
+test  <- dplyr::anti_join(SeoulData, train, by = 'number')
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Data Cleaning & Pre-Processing
+
+In this section we'll clean and process the data by renaming some of the variables, removing unused variables, and adding a new variable. We must do the same cleaning and preprocessing on testing set that we are doing on the training set.
+
+```{r}
+# Remove the date variable (can be ignored per instructions)
+testOne <- test %>% select(-contains('date')) 
+trainOne <- train %>% select(-contains('date')) 
+
+# Rename some columns
+# I want to take out all the symbols
+# I also want to make sure each variable has no spaces in between words
+testTwo <- 
+  testOne %>% rename(
+  "RentedBikeCount" = "Rented Bike Count",
+  "Temperature" = "Temperature(°C)",
+  "Humidity" = "Humidity(%)",
+  "WindSpeed" = "Wind speed (m/s)",
+  "Visibility" = "Visibility (10m)",
+  "DewPointTemp" = "Dew point temperature(°C)",
+  "SolarRadiation" = "Solar Radiation (MJ/m2)",
+  "Rainfall" = "Rainfall(mm)",
+  "Snowfall" = "Snowfall (cm)",
+  "FunctioningDay" = "Functioning Day"
+)
+
+trainTwo <- 
+  trainOne %>% rename(
+  "RentedBikeCount" = "Rented Bike Count",
+  "Temperature" = "Temperature(°C)",
+  "Humidity" = "Humidity(%)",
+  "WindSpeed" = "Wind speed (m/s)",
+  "Visibility" = "Visibility (10m)",
+  "DewPointTemp" = "Dew point temperature(°C)",
+  "SolarRadiation" = "Solar Radiation (MJ/m2)",
+  "Rainfall" = "Rainfall(mm)",
+  "Snowfall" = "Snowfall (cm)",
+  "FunctioningDay" = "Functioning Day"
+)
+
+# Finally we'll create the new variable that we'll
+# use in Logistic Regression
+testFinal <- testTwo %>% 
+  mutate(BikesRentedBinary = case_when(RentedBikeCount >= 650 ~ 1,
+                        RentedBikeCount < 650  ~ 0))
+
+trainFinal <- trainTwo %>% 
+  mutate(BikesRentedBinary = case_when(RentedBikeCount >= 650 ~ 1,
+                        RentedBikeCount < 650  ~ 0))
+
+```
+
+### Basic EDA
+We're mainly interested in our response variable RentedBikeCount. Although we got familiar with our variable names in the prior section, let's first take a brief look at the data types we're dealing with.
+
+```{r}
+# Print dataset
+str(trainFinal)
+```
+It looks like we have several numerical variables, but there are also some categorical variables as well, such as Seasons, Holiday, and FunctioningDay.
+
+Let's briefly look at some contingency tables. To keep table simplicity, we're going to use the binary Bikes Rented variable, where 1 is greater than or equal to 650 bikes rented, and 0 is less than 650 bikes rented.
+
+```{r}
+table(trainFinal$BikesRentedBinary, trainFinal$Seasons)
+```
+It seems that bikes pass the 650 threshold most often in the Summer and Autumn, and rarely in the Winter time.
+
+Next, let's explore correlation.
+```{r}
+
+# First we must remove non-numeric variables
+correlation <- cor(trainFinal  %>% 
+                     select(-Holiday, -'FunctioningDay', -number, -Seasons))
+
+# Call ggcorrplot() function to get a pretty correlation plot
+ggcorrplot(correlation)
+```
+Seemingly Temperature and Hour are the variables that correlate the most with the RentedBikeCount.
+
+For the last step in this brief EDA, let's look at a few scatterplots.
+
+```{r}
+ggplot(trainFinal, aes(x = Hour, y = RentedBikeCount)) +
+  geom_jitter() +
+  ggtitle("RentedBikeCount by Hour") +
+  theme_bw()
+```
+This tells us the majority of bikes are rented later in the day. 
+
+
+```{r}
+ggplot(trainFinal, aes(x = Temperature, y = RentedBikeCount, col = Seasons)) +
+  geom_jitter() +
+  ggtitle("RentedBikeCount by Temperature") +
+  theme_bw()
+```
+
+This looks like that Temperature/Seasons are related to one another in terms of the number of bikes rented, which logically makes sense.
+
+### Fitting MLR Models
