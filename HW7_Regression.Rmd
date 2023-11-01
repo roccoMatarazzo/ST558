@@ -17,9 +17,9 @@ library(caret)
 
 ```
 
-### Reading the Data
+## Reading the Data
 
-First, call the following packages: `r ggplot2`, `r tidyverse`, `r readr`, `r ggcorrplot`, and `r caret`. Now, we can read in our data:
+First, call the following packages: `ggplot2`, `tidyverse`, `readr`, `ggcorrplot`, and caret`. Now, we can read in our data:
 
 ```{r}
 
@@ -33,7 +33,7 @@ SeoulData <- read_csv(fileName, locale=locale(encoding="latin1"))
 
 We need to include the argument for locale in order to fix the error when loading the file.
 
-### Split the Data
+## Split the Data
 
 Here we will split the data into a testing set and training set. The training set will contain 75% of the data. The testing set will contain 25% of the data.
 
@@ -47,25 +47,29 @@ set.seed(50)
 SeoulData$number <- 1:nrow(SeoulData)
 
 # Splitting the data into two sets
-train <- SeoulData %>% dplyr::sample_frac(0.75)
-test  <- dplyr::anti_join(SeoulData, train, by = 'number')
+trainingIndex <- createDataPartition(SeoulData$`Rented Bike Count`, p=0.75, list=FALSE)
+
+train <- SeoulData[trainingIndex,]
+test <- SeoulData[-trainingIndex,]
 
 ```
 
-### Data Cleaning & Pre-Processing
+## Data Cleaning & Pre-Processing
 
-In this section we'll clean and process the data by renaming some of the variables, removing unused variables, and adding a new variable. We must do the same cleaning and preprocessing on testing set that we are doing on the training set.
+In this section we'll clean and process the data by renaming some of the variables, removing unused variables, and adding a new variable. We must do the same cleaning and preprocessing on testing set that we are doing on the training set. 
 
 ```{r}
 # Remove the date variable (can be ignored per instructions)
-testOne <- test %>% select(-contains('date')) 
-trainOne <- train %>% select(-contains('date')) 
+testOne <- test %>%
+  dplyr::select(-contains('date')) 
+trainOne <- train %>%
+  dplyr::select(-contains('date')) 
 
 # Rename some columns
 # I want to take out all the symbols
 # I also want to make sure each variable has no spaces in between words
 testTwo <- 
-  testOne %>% rename(
+  testOne %>% dplyr::rename(
   "RentedBikeCount" = "Rented Bike Count",
   "Temperature" = "Temperature(°C)",
   "Humidity" = "Humidity(%)",
@@ -79,7 +83,7 @@ testTwo <-
 )
 
 trainTwo <- 
-  trainOne %>% rename(
+  trainOne %>% dplyr::rename(
   "RentedBikeCount" = "Rented Bike Count",
   "Temperature" = "Temperature(°C)",
   "Humidity" = "Humidity(%)",
@@ -95,16 +99,16 @@ trainTwo <-
 # Finally we'll create the new variable that we'll
 # use in Logistic Regression
 testFinal <- testTwo %>% 
-  mutate(BikesRentedBinary = case_when(RentedBikeCount >= 650 ~ 1,
+  dplyr::mutate(BikesRentedBinary = case_when(RentedBikeCount >= 650 ~ 1,
                         RentedBikeCount < 650  ~ 0))
 
 trainFinal <- trainTwo %>% 
-  mutate(BikesRentedBinary = case_when(RentedBikeCount >= 650 ~ 1,
+  dplyr::mutate(BikesRentedBinary = case_when(RentedBikeCount >= 650 ~ 1,
                         RentedBikeCount < 650  ~ 0))
 
 ```
 
-### Basic EDA
+## Basic EDA
 We're mainly interested in our response variable RentedBikeCount. Although we got familiar with our variable names in the prior section, let's first take a brief look at the data types we're dealing with.
 
 ```{r}
@@ -124,8 +128,8 @@ Next, let's explore correlation.
 ```{r}
 
 # First we must remove non-numeric variables
-correlation <- cor(trainFinal  %>% 
-                     select(-Holiday, -'FunctioningDay', -number, -Seasons))
+correlation <- cor(trainFinal  %>%
+                     dplyr::select(-Holiday, -'FunctioningDay', -number, -Seasons))
 
 # Call ggcorrplot() function to get a pretty correlation plot
 ggcorrplot(correlation)
@@ -146,10 +150,364 @@ This tells us the majority of bikes are rented later in the day.
 ```{r}
 ggplot(trainFinal, aes(x = Temperature, y = RentedBikeCount, col = Seasons)) +
   geom_jitter() +
-  ggtitle("RentedBikeCount by Temperature") +
+  ggtitle("RentedBikeCount by Temperature by Season") +
   theme_bw()
 ```
 
 This looks like that Temperature/Seasons are related to one another in terms of the number of bikes rented, which logically makes sense.
 
-### Fitting MLR Models
+## Fitting MLR Models
+Here we are going to fit three models. One via backwards selection, one via forwards selection, and one using LASSO regression. I'm going to use the following explanatory variables in each model, and let the model selection methods run their course:  
+
+- Temperature
+- Rainfall
+- Visibility
+- Seasons
+- WindSpeed
+
+I decided on these models during the EDA process. The categorical variable Seasons certainly showed some impact on the RentedBikeCount in the contingency table. Temperature, visibilty, and windspeed were all relatively correlated with the response, RentedBikeCount. While rainfall was not necessarily correlated, I logically considered that bikes are probably less likely to be rented during a rainy day. The same goes for humidity.
+
+#### Backwards + Forwards
+I am going to hide the output from these codes because they're quite lengthy! 
+
+```{r, results='hide'}
+
+# forward selection
+forwardSelection <- 
+  train(RentedBikeCount ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity,
+        data = trainFinal %>% dplyr::select(-BikesRentedBinary), 
+        method = "lmStepAIC", 
+        direction = "forward")
+
+# backward selection
+backwardSelection <- 
+  train(RentedBikeCount ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity, 
+        data = trainFinal %>% dplyr::select(-BikesRentedBinary), 
+        method = "lmStepAIC", 
+        direction = "backward")
+
+```
+
+Here I will print the final model from each of the methods above.
+
+**Forward Selection**
+```{r}
+
+bestForward <- forwardSelection$finalModel
+bestForward
+
+```
+
+**Backward Selection**
+```{r}
+
+bestBackward <- backwardSelection$finalModel
+bestBackward
+```
+### LASSO Regression
+Here we will compute a LASSO regression model. We will use the same variables above while using cross-validation and tune the best lambda parameter.
+
+```{r}
+
+LASSO_Model <- train(RentedBikeCount ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity, 
+      data =  trainFinal %>% dplyr::select(-BikesRentedBinary ),
+      method = "glmnet",
+      trControl = trainControl(method = "cv"),
+      tuneGrid = expand.grid(alpha = 1,
+                              lambda = seq(0, 1, by = 0.05)))
+
+# Pulling the best lamda
+best_tuned_lambda <- LASSO_Model$bestTune$lambda
+
+# Pulling the coefficients for the best model
+bestLasso <- predict(LASSO_Model$finalModel,type="coef", s = best_tuned_lambda)
+bestLasso
+```
+We can see that the best model for each method differ from one another. Now we have 3 models -- a best Forward Selection model, a best Backwards Selection model, and a best LASSO regression model.
+
+## Fitting Three *New* MLR Models
+These models will include interaction and polynomial terms.
+
+### Backwards + Forwards
+Because visibility was dropped from the backwards method above, I am going to square that variable to see if a transformation has a different effect (only in the backwards selection formula). I'm also going to square Rainfall because of it's original lack of correlation with the RentedBikeCount variable. As for other effects, I'm interested in the interaction between temperature and humidity, as well as temperature and seasons. My first model will have only interaction terms. The second model will have only polynomial terms. The third model will have both interaction and polynomial terms.
+
+```{r, results='hide'}
+# Only interactions
+model_one <- 
+  train(RentedBikeCount ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity + Temperature:Humidity + Temperature:factor(Seasons), 
+        data = trainFinal %>% dplyr::select(-BikesRentedBinary), 
+        method = "lm", 
+        trControl = trainControl(method = "cv", number = 10))
+# Storing final model
+finalModelOne <- model_one$finalModel
+
+# Only polynomials
+model_two <- 
+  train(RentedBikeCount ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity + Visibility^2 + Rainfall^2, 
+        data = trainFinal %>% dplyr::select(-BikesRentedBinary),
+        method = "lm",
+        trControl = trainControl(method = "cv", number = 10))
+# Storing final model
+finalModelTwo <- model_two$finalModel
+
+# Interactions and Polynomials
+model_three <- 
+  train(RentedBikeCount ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity + Temperature:Humidity + Temperature:factor(Seasons) + Visibility^2 + Rainfall^2, 
+        data = trainFinal %>% dplyr::select(-BikesRentedBinary),
+        method = "lm",
+        trControl = trainControl(method = "cv", number = 10))
+
+# Storing final model
+finalModelThree <- model_three$finalModel
+
+```
+
+We can compare these models by checking out their results on the testing data.
+```{r}
+# Get the predicted values for each model
+pred_M1 <- predict(finalModelOne, data = testFinal)
+pred_M2 <- predict(finalModelTwo, data = testFinal)
+pred_M3 <- predict(finalModelThree, data = testFinal)
+
+# Calculating RMSE (Root Mean Sq. Error)
+# This is a good measure of accuracy
+RMSE_M1 <- RMSE(pred_M1, testFinal$RentedBikeCount)
+RMSE_M2 <- RMSE(pred_M2, testFinal$RentedBikeCount)
+RMSE_M3 <- RMSE(pred_M3, testFinal$RentedBikeCount)
+
+paste("The RMSE for Model 1 is:", round(RMSE_M1, 2))
+paste("The RMSE for Model 2 is:", round(RMSE_M2, 2))
+paste("The RMSE for Model 3 is:", round(RMSE_M3, 2))
+
+```
+The best model of these 3 is model 2! It has the lowest RMSE. We will move forward with that one.
+
+Now, we can take similar steps we did here for all 4 of our "best" models.
+```{r}
+# Get the predicted values for each model
+# The best of the three int/poly models
+pred_M2 <- predict(finalModelTwo, data = testFinal)
+
+# The best forward selection model
+pred_Forward <- predict(bestForward, data = testFinal)
+
+# The best backward selection model
+pred_backward <- predict(bestBackward, data = testFinal)
+
+# The best LASSO selection model
+
+# Pivoting the Data Wider for this model
+# We need the data to be represented in matrix form
+LASSO_Test <- testFinal %>%
+  mutate(n = 1) %>%
+  pivot_wider(names_from = Seasons, values_from = n, values_fill = list(n = 0)) %>%
+  rename("SeasonsSpring" = "Spring",
+         "SeasonsSummer" = "Summer",
+         "SeasonsWinter" = "Winter") %>%
+  dplyr::select(Temperature, Rainfall, Visibility, SeasonsSpring,
+                SeasonsSummer, SeasonsWinter, WindSpeed, Humidity)
+
+pred_LASSO <- predict(LASSO_Model$finalModel, 
+        newx = as.matrix(LASSO_Test), 
+        type = "response", 
+        s = best_tuned_lambda)
+
+
+# Calculating RMSE (Root Mean Sq. Error)
+# This is a good measure of accuracy
+RMSE_LASSO <- RMSE(pred_LASSO, testFinal$RentedBikeCount)
+RMSE_Forward <- RMSE(pred_Forward, testFinal$RentedBikeCount)
+RMSE_Backward <- RMSE(pred_backward, testFinal$RentedBikeCount)
+RMSE_M2 <- RMSE(pred_M2, testFinal$RentedBikeCount)
+
+# Print results (descending fashion)
+paste("The RMSE for the LASSO Model is:", round(RMSE_LASSO, 2))
+paste("The RMSE for Backward is:", round(RMSE_Backward, 2))
+paste("The RMSE for Model 2 (best of 3)  is:", round(RMSE_M2, 2))
+paste("The RMSE for Forward Model is:", round(RMSE_Forward, 2))
+
+```
+The best Model is the LASSO model! It has the lowest RMSE.
+
+## Fitting Logistic Models
+
+Here we are going to fit three Logistic Regression models. Just like we did above, one will be fit via backwards selection, one via forwards selection, and one using LASSO regression. I'm going to use the following explanatory variables in each model, and let the model selection methods run their course:  
+
+- Temperature
+- Rainfall
+- Visibility
+- Seasons
+- WindSpeed
+
+The same reason for choosing these variables are as above.
+
+### Backwards + Forwards
+I am going to hide the output from these codes because they're quite lengthy! 
+
+```{r, results='hide'}
+
+# forward selection
+forwardSelection_Logistic <- 
+  train(BikesRentedBinary  ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity,
+        data = trainFinal %>% dplyr::select(-RentedBikeCount), 
+        method = "lmStepAIC", 
+        direction = "forward")
+
+# backward selection
+backwardSelection_Logistic <- 
+  train(BikesRentedBinary  ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity, 
+        data = trainFinal %>% dplyr::select(-RentedBikeCount), 
+        method = "lmStepAIC", 
+        direction = "backward")
+
+```
+
+Here I will print the final model from each of the methods above.
+
+**Forward Selection**
+```{r}
+
+bestForward_LR <- forwardSelection_Logistic$finalModel
+bestForward_LR
+
+```
+
+**Backward Selection**
+```{r}
+
+bestBackward_LR <- backwardSelection_Logistic$finalModel
+bestBackward_LR
+```
+#### LASSO Regression
+Here we will compute a LASSO regression model. We will use the same variables above while using cross-validation and tune the best lambda parameter.
+
+```{r}
+
+LASSO_Model_Logistic <- train(BikesRentedBinary  ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity, 
+      data = trainFinal %>% dplyr::select(-RentedBikeCount),
+      method = "glmnet",
+      trControl = trainControl(method = "cv"),
+      tuneGrid = expand.grid(alpha = 1,
+                              lambda = seq(0, 1, by = 0.05)))
+
+# Pulling the best lamda
+best_tuned_lambda_LR <- LASSO_Model_Logistic$bestTune$lambda
+
+# Pulling the coefficients for the best model
+bestLasso_LR <- predict(LASSO_Model_Logistic$finalModel,type="coef",
+                        s = best_tuned_lambda_LR)
+bestLasso_LR
+```
+We can see that the best model for each method differ from one another. Now we have 3 models -- a best Forward Selection model, a best Backwards Selection model, and a best LASSO regression model, all for Logistic Regression.
+
+## Fitting Three *New* Logistic Regression Models
+These models will include polynomial and interaction terms.
+
+###### Backwards + Forwards
+For model comparisons sake, I am going to use the same polynomial and interaction terms in this section.
+
+```{r, results='hide'}
+# Only interactions
+model_one_LR <- 
+  train(BikesRentedBinary ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity + Temperature:Humidity + Temperature:factor(Seasons), 
+        data = trainFinal %>% dplyr::select(-RentedBikeCount), 
+        method = "lm", 
+        trControl = trainControl(method = "cv", number = 10))
+# Storing final model
+finalModelOne_LR <- model_one_LR$finalModel
+
+# Only polynomials
+model_two_LR <- 
+  train(BikesRentedBinary ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity + Visibility^2 + Rainfall^2, 
+        data = trainFinal %>% dplyr::select(-RentedBikeCount),
+        method = "lm",
+        trControl = trainControl(method = "cv", number = 10))
+# Storing final model
+finalModelTwo_LR <- model_two_LR$finalModel
+
+# Interactions and Polynomials
+model_three_LR <- 
+  train(BikesRentedBinary ~ Temperature + Rainfall + Visibility + factor(Seasons) + WindSpeed + Humidity + Temperature:Humidity + Temperature:factor(Seasons) + Visibility^2 + Rainfall^2, 
+        data = trainFinal %>% dplyr::select(-RentedBikeCount),
+        method = "lm",
+        trControl = trainControl(method = "cv", number = 10))
+
+# Storing final model
+finalModelThree_LR <- model_three_LR$finalModel
+
+```
+
+We can compare these models by checking out their results on the testing data.
+```{r}
+# Get the predicted values for each model
+pred_M1_LR <- predict(finalModelOne_LR, data = testFinal)
+pred_M2_LR <- predict(finalModelTwo_LR, data = testFinal)
+pred_M3_LR <- predict(finalModelThree_LR, data = testFinal)
+
+# Calculating RMSE (Root Mean Sq. Error)
+# This is a good measure of accuracy
+RMSE_M1_LR <- RMSE(pred_M1_LR, testFinal$BikesRentedBinary)
+RMSE_M2_LR <- RMSE(pred_M2_LR, testFinal$BikesRentedBinary)
+RMSE_M3_LR <- RMSE(pred_M3_LR, testFinal$BikesRentedBinary)
+
+paste("The RMSE for Model 1 is:", round(RMSE_M1_LR, 2))
+paste("The RMSE for Model 2 is:", round(RMSE_M2_LR, 2))
+paste("The RMSE for Model 3 is:", round(RMSE_M3_LR, 2))
+
+```
+The best model of these 3 is model 2! It has the lowest RMSE. We will move forward with that one. I will print that model below.
+
+```{r}
+finalModelTwo_LR
+```
+
+
+Now, we can take similar steps we did here for all 4 of our "best" models.
+```{r}
+# Get the predicted values for each model
+# The best of the three int/poly models
+pred_M2_LR <- predict(finalModelTwo_LR, data = testFinal)
+
+# The best forward selection model
+pred_Forward_LR <- predict(bestForward_LR, data = testFinal)
+
+# The best backward selection model
+pred_backward_LR <- predict(bestBackward_LR, data = testFinal)
+
+# The best LASSO selection model
+
+# Pivoting the Data Wider for this model
+# We need the data to be represented in matrix form
+LASSO_Test <- testFinal %>%
+  mutate(n = 1) %>%
+  pivot_wider(names_from = Seasons, values_from = n, values_fill = list(n = 0)) %>%
+  rename("SeasonsSpring" = "Spring",
+         "SeasonsSummer" = "Summer",
+         "SeasonsWinter" = "Winter") %>%
+  dplyr::select(Temperature, Rainfall, Visibility, SeasonsSpring,
+                SeasonsSummer, SeasonsWinter, WindSpeed, Humidity)
+
+pred_LASSO_LR <- predict(LASSO_Model_Logistic$finalModel, 
+        newx = as.matrix(LASSO_Test), 
+        type = "response", 
+        s = best_tuned_lambda_LR)
+
+
+# Calculating RMSE (Root Mean Sq. Error)
+# This is a good measure of accuracy
+RMSE_LASSO_LR <- RMSE(pred_LASSO_LR, testFinal$RentedBikeCount)
+RMSE_Forward_LR <- RMSE(pred_Forward_LR, testFinal$RentedBikeCount)
+RMSE_Backward_LR <- RMSE(pred_backward_LR, testFinal$RentedBikeCount)
+RMSE_M2_LR <- RMSE(pred_M2_LR, testFinal$RentedBikeCount)
+
+# Print results (descending fashion)
+paste("The RMSE for the LASSO Model is:", round(RMSE_LASSO_LR, 3))
+paste("The RMSE for Backward is:", round(RMSE_Backward_LR, 3))
+paste("The RMSE for Model 2 (best of 3)  is:", round(RMSE_M2_LR, 3))
+paste("The RMSE for Forward Model is:", round(RMSE_Forward_LR, 3))
+
+```
+The best model is Model 2/the Backward Model/the Forward model. Despite different model selections, and specifically the inclusions of polynomial terms in Model 2, the resulting models come out to be the same. That model slightly beats the LASSO regression model.
+
+## Final Conclusion
+The best model of the bunch was the LASSO Regression from the first section, based on RMSE. It had the lowest RMSE by over 250 units.

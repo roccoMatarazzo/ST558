@@ -1,0 +1,250 @@
+---
+title: "HW8_EnsembleLearning"
+author: "Rocco Matarazzo"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+
+# Call packages
+library(ggplot2)
+library(tidyverse)
+library(readr)
+library(ggcorrplot)
+library(caret)
+
+```
+
+# Part 1) kNN
+### Read in Data
+First we'll read in the data.
+```{r}
+
+# Set FileName
+fileName <-"C:/Users/rnm50/OneDrive/Documents/1A North Carolina State University/Fall 2023/ST558 Data Science/heart.csv"
+
+# Read data
+heartData <- read_csv(fileName)
+
+```
+
+### Create New Variable
+Using the mutate function, we can create a new variable.
+```{r}
+# Create new variable and remove others
+heartDataCleaned <-
+  heartData %>%
+  # Create new factor variable
+  mutate(FactorHeartDisease = factor(HeartDisease)) %>%
+  # Do not select these three column
+  select(-HeartDisease, -ST_Slope, -ExerciseAngina)
+  
+```
+
+### Creating Dummy Variables
+Using the dummyVars and predict functions, we can create categorical variables for our dataset.
+Finally, we can bind the entire dataset together to get our final working dataset.
+```{r}
+# Parsing out the binary variables
+dummies <- dummyVars(FactorHeartDisease ~ ChestPainType + Sex + RestingECG, data = heartDataCleaned)
+
+# Getting the categorical variables spread out
+newVars <- (predict(dummies, newdata = heartDataCleaned))
+
+# Column Binding them all together
+heartDataFinal <- cbind(heartDataCleaned %>% select(-ChestPainType, -Sex, -RestingECG), newVars)
+```
+
+
+### Split Data into Testing and Training
+Here we will split the data into training and testing sets. 80% of the data will be in the training set.
+There are several ways to do this. I made sure to set a seed so we get the same training set each time we
+re-run this code.
+```{r}
+# set seed for rerunning purposes
+set.seed(51)
+
+# actually splitting the data
+# the 0.8 at the end implies 80% of data into training set
+train <- sample(1:nrow(heartDataFinal), size = nrow(heartDataFinal)*0.8)
+# taking the rows from heartDataFinal not in the training set
+test <- dplyr::setdiff(1:nrow(heartDataFinal), train)
+
+# applying those to dataset
+heartDataTrain <- heartDataFinal[train, ]
+heartDataTest <- heartDataFinal[test, ]
+```
+
+### Train kNN Model
+Here we will train the kNN model using several tuning parameters.
+```{r}
+# Creating tuning grid for values 1 to 40
+tuningGrid <- expand.grid(k = 1:40)
+
+# Set train control method
+ctrl <- trainControl(
+  # Repeated cross validation
+  method = "repeatedcv", 
+  # 10 folds
+  number = 10,             
+  # 3 repeats 
+  repeats = 3)
+
+knnFit <- train(FactorHeartDisease ~ .,
+              data = heartDataTrain,
+              method = "knn",
+              preProcess = c("center","scale"),
+              trControl = ctrl, 
+              tuneGrid = tuningGrid)
+knnFit
+```
+
+As the output states, k = 40 was the chosen tuning parameter.
+
+
+### Check Model Performance
+We can evaluate how the model performs by using a confusion matrix. We must first acquire predicions! 
+```{r}
+# First get predictions on test set
+testPredictions <- predict(knnFit, newdata = heartDataTest)
+
+# Calculate the confusion matrix and other performance metrics
+confusionMatrix(testPredictions,  heartDataTest$FactorHeartDisease)
+```
+# Part 2) Ensemble
+I did not print any of the initial fits in this section because of the length of their output.
+
+### Classification Tree
+
+First we'll do a classification tree.
+```{r}
+# Creating tuning grid for values 0 to 0.1
+ tuningGrid_CT <- expand.grid(cp = seq(0, 0.1, by = 0.001))
+
+# Setting ensemble controls
+ctrl_ensemble <- trainControl(
+  # Repeated cross validation
+  method = "repeatedcv", 
+  # 5 folds for computational ease
+  number = 5,             
+  # 3 repeats 
+  repeats = 3)
+
+CT_Fit <- train(FactorHeartDisease ~ .,
+              data = heartDataTrain,
+              method = "rpart",
+              preProcess = c("center","scale"),
+              trControl = ctrl_ensemble, 
+              tuneGrid = tuningGrid_CT)
+
+```
+
+
+### Bagged Tree
+Next, we'll do a bagged tree.
+```{r}
+# No tuning parameter here
+
+# Setting ensemble controls
+ctrl_ensemble <- trainControl(
+  # Repeated cross validation
+  method = "repeatedcv", 
+  # 5 folds for computational ease
+  number = 5,             
+  # 3 repeats 
+  repeats = 3)
+
+BT_Fit <- train(FactorHeartDisease ~ .,
+              data = heartDataTrain,
+              method = "treebag",
+              preProcess = c("center","scale"),
+              trControl = ctrl_ensemble)
+
+```
+### Random Forest
+Next, a random forest. Tuning parameter 15 was the best value.
+```{r}
+# Creating tuning grid for values 1 to 15
+ tuningGrid_RF <- expand.grid(mtry = seq(1, 15))
+
+# Setting ensemble controls
+ctrl_ensemble <- trainControl(
+  # Repeated cross validation
+  method = "repeatedcv", 
+  # 5 folds for computational ease
+  number = 5,             
+  # 3 repeats 
+  repeats = 3)
+
+RF_Fit <- train(FactorHeartDisease ~ .,
+              data = heartDataTrain,
+              method = "rf",
+              preProcess = c("center","scale"),
+              trControl = ctrl_ensemble, 
+              tuneGrid = tuningGrid_RF)
+```
+
+### Boosted Tree
+And finally a boosted tree!  As the output says, thefinal tuning parameters were n.trees = 200, interaction.depth = 1, shrinkage = 0.1 and n.minobsinnode = 10.
+```{r, results=FALSE}
+# Create tuning grid for boosted tree (several variables!)
+tuningGrid_boostedTrees <- expand.grid(n.trees = c(25, 50, 100, 200),
+                             interaction.depth = c(1,2,3),
+                             shrinkage = c(0.1),
+                             n.minobsinnode = c(10))
+
+# Setting ensemble controls
+ctrl_ensemble <- trainControl(
+  # Repeated cross validation
+  method = "repeatedcv", 
+  # 5 folds for computational ease
+  number = 5,             
+  # 3 repeats 
+  repeats = 3)
+
+BoostedTree_Fit <- train(FactorHeartDisease ~ .,
+              data = heartDataTrain,
+              method = "gbm",
+              preProcess = c("center","scale"),
+              trControl = ctrl_ensemble, 
+              tuneGrid = tuningGrid_boostedTrees)
+
+```
+
+### Testing Each Model
+Here we'll test each model using the testing dataset.
+
+```{r}
+# Save all predictions
+CT_predict <- predict(CT_Fit, newdata = heartDataTest)
+BT_predict <- predict(BT_Fit, newdata = heartDataTest)
+RF_predict <- predict(RF_Fit, newdata = heartDataTest)
+BoostedTree_predict <- predict(BoostedTree_Fit, newdata = heartDataTest)
+```
+
+Now we can run a confusion matrix on each method.
+
+#### Classificaiton Tree Confusion Matrix
+```{r}
+# Run confusion matrices
+confusionMatrix(CT_predict,  heartDataTest$FactorHeartDisease)
+```
+
+#### Bagged Tree Confusion Matrix
+```{r}
+confusionMatrix(BT_predict,  heartDataTest$FactorHeartDisease)
+```
+
+#### Random Forest Confusion Matrix
+```{r}
+confusionMatrix(RF_predict,  heartDataTest$FactorHeartDisease)
+```
+
+#### Boosted Tree Confusion Matrix
+```{r}
+confusionMatrix(BoostedTree_predict,  heartDataTest$FactorHeartDisease)
+```
+The classification tree was the least accurate of these four models, and slightly less accurate than the kNN model. The boosted tree was the most accurate model.
